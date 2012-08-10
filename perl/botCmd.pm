@@ -22,9 +22,11 @@ $reloadtime = localtime;
 my $dbh = DBI->connect("dbi:SQLite:dbname=$root/db/SwagBot.db", "", "");
 my $devices = {};
 my $users = {};
+my $users1 = {};
 my $links = {};
 _load_devices();
 _load_users();
+_load_users1();
 _load_links();
 
 our %commands = (
@@ -41,12 +43,16 @@ our %commands = (
 		usage => "passwd <old_passwd> <new_passwd> -- Change your bot password.",
 		level => 0,
 	},
-	users => {
-		usage => "users -- List all users in the user database.",
+	userlist => {
+		usage => "userlist -- List all users in the user database.",
 		level => 100,
 	},
 	useradd => {
-		usage => "useradd <username> <mask> <password> <level> -- Add a user to the user database.",
+		usage => "useradd <username> <password> <level> -- Add a user to the user database.",
+		level => 100,
+	},
+	adduser => {
+		usage => "adduser <nick> <mask> <password> <level> -- Add a user to the user database.",
 		level => 100,
 	},
 	userdel => {
@@ -59,14 +65,6 @@ our %commands = (
 	},
 	gtfo => {
 		usage => "gtfo <nick> -- Kick someone out.",
-		level => 50,
-	},
-	mute => {
-		usage => "mute <nick> -- Mute a user.",
-		level => 50,
-	},
-	unmute => {
-		usage => "unmute <nick> -- Unmute a user.",
 		level => 50,
 	},
 	say => {
@@ -130,50 +128,64 @@ our %commands = (
 #################
 
 sub help {
-	my ($irc, $where, $args, $usermask, $command) = @_;
-	my $nick = (split /!/, $usermask)[0];
+	my ($irc, $where, $args, $sender, $command) = @_;
 	my $level = 0;
 	my $help_str = "";
 	my @valid_commands = ();
 
-	if($where =~ /^#/) {
-		$target = $where;
-	} else {
-		$target = $nick;
-	}
-
-	if(defined $users->{$nick}) {
-		$level = $users->{$nick}->{level} if $users->{$nick}->{level};
+	if(defined $users->{$sender}) {
+		$level = $users->{$sender}->{level} if $users->{$sender}->{level};
 	}
 
 	if($commands{$args}) {
 		if($level >= $commands{$args}{level}) {
-			$irc->yield(privmsg => $target => "Usage: $commands{$args}{usage}");
+			$irc->yield(privmsg => $where => "Usage: $commands{$args}{usage}");
 		}		
 	} elsif($args) {
-		$irc->yield(privmsg => $target => "Sorry, $args not found in list of commands.  Try \"!help\" to see list of available commands.");
+		$irc->yield(privmsg => $where => "Sorry, $args not found in list of commands.  Try \"!help\" to see list of available commands.");
 	} else {
 		foreach my $cmd (sort keys %commands) {
 			push(@valid_commands, $cmd) if $level >= $commands{$cmd}{level};
 		}
 		my $available = join(", ", sort(@valid_commands));
-		$irc->yield(privmsg => $target => "Available commands are: $available. Use \"!help <command>\" for help with a specific command.");
+		$irc->yield(privmsg => $where => "Available commands are: $available. Use \"!help <command>\" for help with a specific command.");
 	}	
 	return;
 }
 
 sub auth {
-	my ($irc, $where, $args, $usermask, $command) = @_;
+	my ($irc, $where, $args, $sender, $command) = @_;
 	_load_users();
+
+	return if $where =~ m/^#/;
+
+	if(defined $users->{$where}) {
+		my $nick = $where;
+		if(crypt($args, $users->{$nick}->{password}) eq $users->{$nick}->{password}) {
+			my $now = time;
+			$dbh->do("UPDATE users SET last_auth='$now' WHERE username='$nick'");
+			_load_users();
+			$irc->yield(privmsg => $where => "Login successful");
+		} else {
+			$irc->yield(privmsg => $where => "Incorrect password");
+		}
+	} else {
+		$irc->yield(privmsg => $where => "Unknown username: $nick");
+	}
+}
+
+sub auth1 {
+	my ($irc, $where, $args, $usermask, $command) = @_;
+	_load_users1();
 
 	return if $where =~ m/^#/;
 	my($nick, $mask) = split(/!/, $usermask);
 
-	if(defined $users->{$nick} and defined $users->{$nick}->{mask}) {
-		if(crypt($args, $users->{$nick}->{password}) eq $users->{$nick}->{password}) {
+	if(defined $users1->{$nick} and defined $users1->{$nick}->{mask}) {
+		if(crypt($args, $users1->{$nick}->{password}) eq $users1->{$nick}->{password}) {
 			my $now = time;
 			$dbh->do("UPDATE users1 SET last_auth='$now' WHERE nick='$nick'");
-			_load_users();
+			_load_users1();
 			$irc->yield(privmsg => $nick => "Login successful");
 		} else {
 			$irc->yield(privmsg => $nick => "Incorrect password");
@@ -185,118 +197,123 @@ sub auth {
 }
 
 sub passwd {
-	my ($irc, $where, $args, $usermask, $command) = @_;
+	my ($irc, $where, $args, $sender, $command) = @_;
 	_load_users();
 
 	return if $where =~ m/^#/;
-	my $nick = (split /!/, $usermask)[0];
+	my $nick = $where;
 
 	if(defined $users->{$nick}) {
 		my @args = split(/\s+/, $args);
 		if(@args != 2) {
-			$irc->yield(privmsg => $where => "Syntax error.");
+			$irc->yield(privmsg => $where =>"Syntax error.");
 			help($irc, $where, "passwd");
 		} else {
 			my ($old_passwd, $new_passwd) = @args;
 			if(crypt($old_passwd, $users->{$nick}->{password}) eq $users->{$nick}->{password}) {
 				my $encrypted = crypt($new_passwd, $salt);
-				$dbh->do("UPDATE users1 SET password='$encrypted' WHERE nick='$nick'");
+				$dbh->do("UPDATE users SET password='$encrypted' WHERE username='$nick'");
 				_load_users();
-				$irc->yield(privmsg => $nick => "Password successfully changed");
+				$irc->yield(privmsg => $where => "Password successfully changed");
 			} else {
-				$irc->yield(privmsg => $nick => "Incorrect old password");
+				$irc->yield(privmsg => $where => "Incorrect old password");
 			}
 		}
 	} else {
-		$irc->yield(privmsg => $nick => "Unknown username: $nick");
+		$irc->yield(privmsg => $where => "Unknown username: $nick");
 	}
-}
-
-sub users {
-	my ($irc, $where, $args, $usermask, $command) = @_;
-	my ($nick, $mask) = split (/!/, $usermask);
-	return if $where =~ m/^#/;
-
-	my $validate = _validate_user($irc, $nick, $mask, $command);
-	if($validate->{status} eq "Error") {
-		$irc->yield(privmsg => $nick => $validate->{message});
-	} else {
-		_load_users();
-		# join(", ", sort(keys(%$devices)));
-		my $userlist = join(", ", sort(keys(%{$users})));
-		$irc->yield(privmsg => $nick => "Users: $userlist");
-	}
-	return;
 }
 
 sub useradd {
-	my ($irc, $where, $args, $usermask, $command) = @_;
-	my ($nick, $mask) = split (/!/, $usermask);
-	return if $where =~ m/^#/;
+	my ($irc, $where, $args, $sender, $command) = @_;
 
-	my $validate = _validate_user($irc, $nick, $mask, $command);
+	my $validate = _validate_user($irc, $where, $sender, $command);
 	if($validate->{status} eq "Error") {
-		$irc->yield(privmsg => $nick => $validate->{message});
+		$irc->yield(privmsg => $sender => $validate->{message});
 	} else {
 		_load_users();
 
 		my @args = split(/\s+/, $args);
-		if(@args != 4) {
-			$irc->yield(privmsg => $nick => "Syntax error.");
-			help($irc, $nick, "useradd");
+		if(@args != 3) {
+			$irc->yield(privmsg => $where =>"Syntax error.");
+			help($irc, $where, "useradd");
 		} else {
-			my ($username, $mask, $password, $level) = ($args[0], $args[1], $args[2], $args[3]);
+			my ($username, $password, $level) = ($args[0], $args[1], $args[2]);
 			if(defined $users->{$username}) {
-				$irc->yield(privmsg => $nick => "Error. User $username already exists.");
+				$irc->yield(privmsg => $where => "Error. Username $username already exists.");
 			} else {
 				my $encrypted = crypt($password, $salt);
-				$dbh->do("INSERT INTO users1 (nick, mask, password, level) VALUES ('$username', '$mask', '$encrypted', '$level')");
+				$dbh->do("INSERT INTO users (username, password, level) VALUES ('$username', '$encrypted', '$level')");
 				_load_users();
-				$irc->yield(privmsg => $nick => "User \"$username\" successfully created.");
+				$irc->yield(privmsg => $where => "User \"$username\" successfully created.");
 				$irc->yield(privmsg => $username => "Your bot account has been created with the default password \"$password\". Please use \"passwd\" to change it.");
 			}
 		}
 	}
 }
 
-sub userdel {
-	my ($irc, $where, $args, $usermask, $command) = @_;
-	my ($nick, $mask) = split (/!/, $usermask);
-	return if $where =~ m/^#/;
+sub adduser {
+	my ($irc, $where, $args, $sender, $command) = @_;
 
-	my $validate = _validate_user($irc, $nick, $mask, $command);
+	my $validate = _validate_user($irc, $where, $sender, $command);
 	if($validate->{status} eq "Error") {
-		$irc->yield(privmsg => $nick => $validate->{message});
+		$irc->yield(privmsg => $sender => $validate->{message});
+	} else {
+		_load_users();
+
+		my @args = split(/\s+/, $args);
+		if(@args != 4) {
+			$irc->yield(privmsg => $where =>"Syntax error.");
+			help($irc, $where, "adduser");
+		} else {
+			my ($nick, $mask, $password, $level) = ($args[0], $args[1], $args[2], $args[3]);
+			if(defined $users1->{$nick}) {
+				$irc->yield(privmsg => $where => "Error. User $nick already exists.");
+			} else {
+				my $encrypted = crypt($password, $salt);
+				$dbh->do("INSERT INTO users1 (nick, mask, password, level) VALUES ('$nick', '$mask', '$encrypted', '$level')");
+				_load_users();
+				$irc->yield(privmsg => $where => "User \"$nick\" successfully created.");
+				$irc->yield(privmsg => $nick => "Your bot account has been created with the default password \"$password\". Please use \"passwd\" to change it.");
+			}
+		}
+	}
+}
+
+sub userdel {
+	my ($irc, $where, $args, $sender, $command) = @_;
+
+	my $validate = _validate_user($irc, $where, $sender, $command);
+	if($validate->{status} eq "Error") {
+		$irc->yield(privmsg => $sender => $validate->{message});
 	} else {
 		_load_users();
 
 		if($args =~ /s\+/) {
-			$irc->yield(privmsg => $nick => "Syntax error.");
+			$irc->yield(privmsg => $where =>"Syntax error.");
 			help($irc, $where, "userdel");
 		} else {
 			if(defined $users->{$args}) {
-				$dbh->do("DELETE FROM users1 WHERE nick='$args'");
+				$dbh->do("DELETE FROM users WHERE username='$args'");
 				_load_users();
-				$irc->yield(privmsg => $nick => "User \"$args\" successfully deleted.");
+				$irc->yield(privmsg => $where => "User \"$args\" successfully deleted.");
 			} else {
-				$irc->yield(privmsg => $nick => "Unknown username: $args");
+				$irc->yield(privmsg => $where => "Unknown username: $args");
 			}
 		}
 	}
 }
 
 sub shutdown {
-	my ($irc, $where, $args, $usermask, $command) = @_;
-	my ($nick, $mask) = split (/!/, $usermask);
-	return if $where =~ m/^#/;
+	my ($irc, $where, $args, $sender, $command) = @_;
 
-	my $validate = _validate_user($irc, $nick, $mask, $command);
+	my $validate = _validate_user($irc, $where, $sender, $command);
 	if($validate->{status} eq "Error") {
-		$irc->yield(privmsg => $nick => $validate->{message});
+		$irc->yield(privmsg => $sender => $validate->{message});
 	} else {
 		my @args = split(/\s+/, $args);
 		if(@args != 1) {
-			$irc->yield(privmsg => $nick => "Syntax error.");
+			$irc->yield(privmsg => $nick =>"Syntax error.");
 			help($irc, $nick, "shutdown");
 		} else {
             my $password = $args[0];
@@ -308,79 +325,33 @@ sub shutdown {
 }
 
 sub gtfo {
-	my ($irc, $where, $args, $usermask, $command) = @_;
-	my ($nick, $mask) = split (/!/, $usermask);
-	return unless $where =~ /^#/;
+	my ($irc, $where, $args, $sender, $command) = @_;
 
-	my $validate = _validate_user($irc, $nick, $mask, $command);
+	my $validate = _validate_user($irc, $where, $sender, $command);
 	if($validate->{status} eq "Error") {
 		if($validate->{message} =~ /^You do not have permission/ or $validate->{message} =~ /^Unknown username/) {
-			$irc->yield(kick => $where => $nick => "Denied! GTFO!");
+			$irc->yield(kick => "#teamkang" => $sender => "Denied! GTFO!");
 		} else {
-			$irc->yield(privmsg => $nick => $validate->{message});
+			$irc->yield(privmsg => $sender => $validate->{message});
 		}
 	} else {
 		my @args = split(/\s+/, $args);
 		if(@args != 1) {
-			$irc->yield(privmsg => $nick => "Syntax error.");
-			help($irc, $nick, "gtfo");
+			$irc->yield(privmsg => $where =>"Syntax error.");
+			help($irc, $where, "gtfo");
 		} else {
 			my $target = $args[0];
-			$irc->yield(kick => $where => $target => "GTFO!");
+			$irc->yield(kick => "#teamkang" => $target => "GTFO!");
 		}
 	}
-}
-
-sub mute {
-	my ($irc, $where, $args, $usermask, $command) = @_;
-	my ($nick, $mask) = split (/!/, $usermask);
-	return unless $where =~ /^#/;
-
-	my $validate = _validate_user($irc, $nick, $mask, $command);
-	if($validate->{status} eq "Error") {
-		$irc->yield(privmsg => $nick => $validate->{message});
-	} else {
-		my @args = split(/\s+/, $args);
-		if(@args != 1) {
-			$irc->yield(privmsg => $nick => "Syntax error.");
-			help($irc, $nick, "mute");
-		} else {
-			my $target = $args[0];
-			$irc->yield(mode => "$where +q $target");
-		}
-	}
-	return;
-}
-
-sub unmute {
-	my ($irc, $where, $args, $usermask, $command) = @_;
-	my ($nick, $mask) = split (/!/, $usermask);
-	return unless $where =~ /^#/;
-
-	my $validate = _validate_user($irc, $nick, $mask, $command);
-	if($validate->{status} eq "Error") {
-		$irc->yield(privmsg => $nick => $validate->{message});
-	} else {
-		my @args = split(/\s+/, $args);
-		if(@args != 1) {
-			$irc->yield(privmsg => $nick => "Syntax error.");
-			help($irc, $nick, "mute");
-		} else {
-			my $target = $args[0];
-			$irc->yield(mode => "$where -q $target");
-		}
-	}
-	return;
 }
 
 sub say {
-	my ($irc, $where, $args, $usermask, $command) = @_;
-	my ($nick, $mask) = split (/!/, $usermask);
-	return unless $where =~ /^#/;
+	my ($irc, $where, $args, $sender, $command) = @_;
 
-	my $validate = _validate_user($irc, $nick, $mask, $command);
+	my $validate = _validate_user($irc, $where, $sender, $command);
 	if($validate->{status} eq "Error") {
-		$irc->yield(privmsg => $nick => $validate->{message});
+		$irc->yield(privmsg => $sender => $validate->{message});
 	} else {
 		my @nicks = $irc->nicks();
 
@@ -388,19 +359,22 @@ sub say {
 			my ($target, $text) = ($1, $2);
 			if(grep(/^$target$/, @nicks)) {
 				$irc->yield(privmsg => $target => $text);
-				$irc->yield(privmsg => $nick => "Message sent to $target.");
+				$irc->yield(privmsg => $sender => "Message sent to $target.");
 			} else {
-				$irc->yield(privmsg => $nick => "$target is not in the channel.");
+				$irc->yield(privmsg => $sender => "$target is not in the channel.");
 			}
 		}
 	}
 }
 
 sub seen {
-	my ($irc, $where, $args, $usermask, $command) = @_;
-	return unless $where =~ /^#/;
+	my ($irc, $where, $args, $sender, $command) = @_;
 	my @nicks = $irc->nicks();
-	$args =~ s/ //g;
+
+	#if(grep(/^$args$/, @nicks)) {
+	#	$irc->yield(privmsg => $where => "$args is in the channel now!");
+	#	return;
+	#}
 
 	my $q = "SELECT COUNT(*) FROM seen WHERE nick='$args' AND channel='$where'";
 
@@ -420,10 +394,8 @@ sub seen {
 }
 
 sub mom {
-	my ($irc, $where, $args, $usermask, $command) = @_;
-	return unless $where =~ /^#/;
+	my ($irc, $where, $args, $sender, $command) = @_;
 	my @nicks = $irc->nicks();
-	$args =~ s/ //g;
 
 	if(grep(/^$args$/, @nicks)) {
 		$irc->yield(privmsg => $where => "$args: I heard your mom uses an iPhone.");
@@ -449,82 +421,50 @@ sub process_ctcp {
 ##################
 
 sub time {
-	my ($irc, $where, $args, $usermask, $command) = @_;
-	my $target;
-	my $nick = (split /!/, $usermask)[0];
-
-	if($where =~ /^#/) {
-		$target = $where;
-	} else {
-		$target = $nick;
-	}
-	$irc->yield(privmsg => $target => "It is now " . strftime "%Y-%m-%d %T", localtime(time));
+	my ($irc, $where, $args, $sender, $command) = @_;
+	$irc->yield(privmsg => $where => "It is now " . strftime "%Y-%m-%d %T", localtime(time));
 	return;
 }
 
 sub devices {
-	my ($irc, $where, $args, $usermask, $command) = @_;
-	my $target;
-	my $nick = (split /!/, $usermask)[0];
+	my ($irc, $where, $args, $sender, $command) = @_;
 	my $devices = join(", ", sort(keys(%$devices)));
-
-	if($where =~ /^#/) {
-		$target = $where;
-	} else {
-		$target = (split /!/, $where)[0];
-	}
-	$irc->yield(privmsg => $target => "Supported devices: $devices");
+	$irc->yield(privmsg => $where => "Supported devices: $devices");
 	return;
 }
 
 sub device {
-	my ($irc, $where, $args, $usermask, $command) = @_;
-	my $target;
-	my $nick = (split /!/, $usermask)[0];
-
-	if($where =~ /^#/) {
-		$target = $where;
-	} else {
-		$target = $nick;
-	}
+	my ($irc, $where, $args, $sender, $command) = @_;
 
 	if(defined $devices->{$args}) {
-		$irc->yield(privmsg => $target => "device $args: $devices->{$args}->{description}");
+		$irc->yield(privmsg => $where => "device $args: $devices->{$args}->{description}");
 	} else {
-		$irc->yield(privmsg => $target => "Unknown device: $args. Type ${prefix}devices for a list of supported devices.");
+		$irc->yield(privmsg => $where => "Unknown device: $args. Type ${prefix}devices for a list of supported devices.");
 	}
 	return;
 }
 
 sub deviceadd {
-	my ($irc, $where, $args, $usermask, $command) = @_;
-	my $target;
-	my ($nick, $mask) = split (/!/, $usermask);
+	my ($irc, $where, $args, $sender, $command) = @_;
 
-	if($where =~ /^#/) {
-		$target = $where;
-	} else {
-		$target = $nick;
-	}
-
-	my $validate = _validate_user($irc, $nick, $mask, $command);
+	my $validate = _validate_user($irc, $where, $sender, $command);
 	if($validate->{status} eq "Error") {
-		$irc->yield(privmsg => $target => $validate->{message});
+		$irc->yield(privmsg => $sender => $validate->{message});
 	} else {
 		_load_devices();
 
 		my @args = split(/!/, $args);
 		if(@args != 2) {
-			$irc->yield(privmsg => $target => "Syntax error.");
-			help($irc, $target, "deviceadd");
+			$irc->yield(privmsg => $where =>"Syntax error.");
+			help($irc, $where, "deviceadd");
 		} else {
 			if(defined $devices->{$device_id}) {
-				$irc->yield(privmsg => $target => "Device $device_id already exists.");
+				$irc->yield(privmsg => $where => "Device $device_id already exists.");
 			} else {
 				my ($device_id, $device_name) = @args;
 				$dbh->do("INSERT INTO devices (id, description) VALUES ('$device_id', '$device_name')");
 				_load_devices();
-				$irc->yield(privmsg => $target => "Device $device_id successfully added.");
+				$irc->yield(privmsg => $where => "Device $device_id successfully added.");
 			}
 		}
 	}
@@ -532,104 +472,69 @@ sub deviceadd {
 }
 
 sub devicedel {
-	my ($irc, $where, $args, $usermask, $command) = @_;
-	my $target;
-	my ($nick, $mask) = split (/!/, $usermask);
+	my ($irc, $where, $args, $sender, $command) = @_;
 
-	my $target;
-
-	if($where =~ /^#/) {
-		$target = $where;
-	} else {
-		$target = $nick;
-	}
-
-	my $validate = _validate_user($irc, $nick, $mask, $command);
+	my $validate = _validate_user($irc, $where, $sender, $command);
 	if($validate->{status} eq "Error") {
-		$irc->yield(privmsg => $target => $validate->{message});
+		$irc->yield(privmsg => $sender => $validate->{message});
 	} else {
 		_load_devices();
 
 		my @args = split(/\s+/, $args);
 		if(@args != 1) {
-			$irc->yield(privmsg => $target => "Syntax error.");
-			help($irc, $target, "devicedel");
+			$irc->yield(privmsg => $where =>"Syntax error.");
+			help($irc, $where, "devicedel");
 		} else {
 			if(defined $devices->{$args[0]}) {
 				$dbh->do("DELETE FROM devices WHERE id=\"$args[0]\"");
 				_load_devices();
-				$irc->yield(privmsg => $target => "Device $args[0] successfully deleted.");
+				$irc->yield(privmsg => $where => "Device $args[0] successfully deleted.");
 			} else {
-				$irc->yield(privmsg => $target => "Unknown device: $args[0]. Type ${prefix}devices for a list of supported devices.");
+				$irc->yield(privmsg => $where => "Unknown device: $args[0]. Type ${prefix}devices for a list of supported devices.");
 			}
 		}
 	}
 }
 
 sub links {
-	my ($irc, $where, $args, $usermask, $command) = @_;
-	my $target;
-	my $nick = (split /!/, $usermask)[0];
-
-	if($where =~ /^#/) {
-		$target = $where;
-	} else {
-		$target = $nick;
-	}
-
+	my ($irc, $where, $args, $sender, $command) = @_;
 	my $links = join(", ", sort(keys(%$links)));
-	$irc->yield(privmsg => $target => "Available links: $links");
+	$irc->yield(privmsg => $where => "Available links: $links");
 	return;
 }
 
 sub link {
-	my ($irc, $where, $args, $usermask, $command) = @_;
-	my $target;
-	my $nick = (split /!/, $usermask)[0];
-
-	if($where =~ /^#/) {
-		$target = $where;
-	} else {
-		$target = $nick;
-	}
+	my ($irc, $where, $args, $sender, $command) = @_;
 
 	if(defined $links->{$args}) {
-		$irc->yield(privmsg => $target => "$args: $links->{$args}->{url}");
+		$irc->yield(privmsg => $where => "$args: $links->{$args}->{url}");
 	} else {
-		$irc->yield(privmsg => $target => "Unknown link: $args. Type ${prefix}links for a list of available links.");
+		$irc->yield(privmsg => $where => "Unknown link: $args. Type ${prefix}links for a list of available links.");
 	}
 	return;
 }
 
 sub linkadd {
-	my ($irc, $where, $args, $usermask, $command) = @_;
-	my $target;
-	my ($nick, $mask) = split (/!/, $usermask);
+	my ($irc, $where, $args, $sender, $command) = @_;
 
-	if($where =~ /^#/) {
-		$target = $where;
-	} else {
-		$target = $nick;
-	}
-
-	my $validate = _validate_user($irc, $nick, $mask, $command);
+	my $validate = _validate_user($irc, $where, $sender, $command);
 	if($validate->{status} eq "Error") {
-		$irc->yield(privmsg => $target => $validate->{message});
+		$irc->yield(privmsg => $sender => $validate->{message});
 	} else {
 		_load_links();
 
 		my @args = split(/!/, $args);
 		if(@args != 2) {
-			$irc->yield(privmsg => $target => "Syntax error.");
-			help($irc, $target, "linkadd");
+			$irc->yield(privmsg => $where =>"Syntax error.");
+			help($irc, $where, "linkadd");
 		} else {
 			if(defined $links->{$link_title}) {
-				$irc->yield(privmsg => $target => "Link $link_title already exists.");
+				$irc->yield(privmsg => $where => "Link $link_title already exists.");
 			} else {
 				my ($link_title, $link_url) = @args;
 				$dbh->do("INSERT INTO links (descriptor, url) VALUES ('$link_title', '$link_url')");
 				_load_links();
-				$irc->yield(privmsg => $target => "Link $link_title successfully added.");
+				$irc->yield(privmsg => $where => "Link $link_title successfully added.");
 			}
 		}
 	}
@@ -637,33 +542,25 @@ sub linkadd {
 }
 
 sub linkdel {
-	my ($irc, $where, $args, $usermask, $command) = @_;
-	my $target;
-	my ($nick, $mask) = (split /!/, $usermask);
+	my ($irc, $where, $args, $sender, $command) = @_;
 
-	if($where =~ /^#/) {
-		$target = $where;
-	} else {
-		$target = $nick;
-	}
-
-	my $validate = _validate_user($irc, $nick, $mask, $command);
+	my $validate = _validate_user($irc, $where, $sender, $command);
 	if($validate->{status} eq "Error") {
-		$irc->yield(privmsg => $target => $validate->{message});
+		$irc->yield(privmsg => $sender => $validate->{message});
 	} else {
 		_load_links();
 
 		my @args = split(/\s+/, $args);
 		if(@args != 1) {
-			$irc->yield(privmsg => $target => "Syntax error.");
-			help($irc, $target, "linkdel");
+			$irc->yield(privmsg => $where =>"Syntax error.");
+			help($irc, $where, "linkdel");
 		} else {
 			if(defined $links->{$args[0]}) {
 				$dbh->do("DELETE FROM links WHERE descriptor=\"$args[0]\"");
 				_load_links();
-				$irc->yield(privmsg => $target => "Link $args[0] successfully deleted.");
+				$irc->yield(privmsg => $where => "Link $args[0] successfully deleted.");
 			} else {
-				$irc->yield(privmsg => $target => "Unknown link: $args[0]. Type ${prefix}links for a list of available links.");
+				$irc->yield(privmsg => $where => "Unknown link: $args[0]. Type ${prefix}links for a list of available links.");
 			}
 		}
 	}
@@ -671,33 +568,25 @@ sub linkdel {
 }
 
 sub linkmod {
-	my ($irc, $where, $args, $usermask, $command) = @_;
-	my $target;
-	my ($nick, $mask) = (split /!/, $usermask);
+	my ($irc, $where, $args, $sender, $command) = @_;
 
-	if($where =~ /^#/) {
-		$target = $where;
-	} else {
-		$target = $nick;
-	}
-
-	my $validate = _validate_user($irc, $nick, $mask, $command);
+	my $validate = _validate_user($irc, $where, $sender, $command);
 	if($validate->{status} eq "Error") {
-		$irc->yield(privmsg => $target => $validate->{message});
+		$irc->yield(privmsg => $sender => $validate->{message});
 	} else {
 		_load_links();
 
 		my @args = split(/!/, $args);
 		if(@args != 2) {
-			$irc->yield(privmsg => $target => "Syntax error.");
-			help($irc, $target, "linkmod");
+			$irc->yield(privmsg => $where =>"Syntax error.");
+			help($irc, $where, "linkmod");
 		} else {
 			if(defined $links->{$args[0]}) {
 				$dbh->do("UPDATE links SET url=\"$args[1]\" WHERE descriptor=\"$args[0]\"");
 				_load_links();
-				$irc->yield(privmsg => $target => "Link $args[0] successfully updated.");
+				$irc->yield(privmsg => $where => "Link $args[0] successfully updated.");
 			} else {
-				$irc->yield(privmsg => $target => "Unknown link: $args[0]. Type ${prefix}links for a list of available links.");
+				$irc->yield(privmsg => $where => "Unknown link: $args[0]. Type ${prefix}links for a list of available links.");
 			}
 		}
 	}
@@ -724,8 +613,13 @@ sub _load_devices {
 }
 
 sub _load_users {
+	my $sth = _do_query($dbh, "SELECT * FROM users");
+	$users = $dbh->selectall_hashref($sth, "username");
+}
+
+sub _load_users1 {
 	my $sth = _do_query($dbh, "SELECT * FROM users1");
-	$users = $dbh->selectall_hashref($sth, "nick");
+	$users1 = $dbh->selectall_hashref($sth, "nick");
 }
 
 sub _load_links {
@@ -734,24 +628,25 @@ sub _load_links {
 }
 
 sub _validate_user {
-	my ($irc, $nick, $mask, $command) = @_;
+	my ($irc, $where, $sender, $command) = @_;
 	my $now = time;
 	my $output;
 
-	if(defined $users->{$nick} and $users->{$nick}->{mask} eq $mask) {
+
+	if(defined $users->{$sender}) {
 		# Validate level
-		if($users->{$nick}->{level} < $commands{$command}{level}) {
+		if($users->{$sender}->{level} < $commands{$command}{level}) {
 			$output = { status => "Error", message => "You do not have permission to execute $command." };
 			return $output;
 		}
 
 		# Validate session
-		if(($now - $users->{$nick}->{last_auth}) > $session_timeout) {
+		if(($now - $users->{$sender}->{last_auth}) > $session_timeout) {
 			$output = { status => "Error", message => "Your session has expired. Please login with \"auth\"." };
 			return $output;
 		}
 	} else {
-		$output = { status => "Error", message => "Unknown username: $nick" };
+		$output = { status => "Error", message => "Unknown username: $sender" };
 		return $output;
 	}
 }
