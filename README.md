@@ -8,3 +8,4 @@ Basic features:
 * Commands definitions are stored in a sqlite database.
 	* Commands can be enabled and disabled on the fly.
 	* Commands can be protected from being disabled, e.g., you cannot disable the disable command
+* Commands deviceadd and linkadd track the user who added the item.

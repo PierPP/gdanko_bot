@@ -5,6 +5,8 @@ INSERT INTO commands VALUES("device", "device <device name> -- Accepts a device 
 INSERT INTO commands VALUES("deviceadd", "deviceadd <device id>!<device name> -- Add a device to the database.", 40, 0, 0, 1, "nogroup");
 INSERT INTO commands VALUES("devicedel", "devicedel <device id> -- Remove a device from the database. Example: devicedel toro", 40, 0, 0, 1, "nogroup");
 INSERT INTO commands VALUES("devices", "devices -- Lists all devices supported by AOKP.", 0, 0, 0, 1, "nogroup");
+INSERT INTO commands VALUES("disable", "disable <command> -- Disable a command.", 90, 0, 0, 0, "nogroup");
+INSERT INTO commands VALUES("enable", "enable <command> -- Enable a command.", 90, 0, 0, 0, "nogroup");
 INSERT INTO commands VALUES("gtfo", "gtfo <nick> -- Kick someone out.", 50, 0, 0, 1, "nogroup");
 INSERT INTO commands VALUES("help", "help [command] -- Without specified command lists all available commands. If a command is given, provides help on that command. If command is issued in a channel it must be prefaced with "", if in a private message omit the .", 0, 0, 0, 1, "nogroup");
 INSERT INTO commands VALUES("link", "link <title> -- Display the URL for link <title>. Example: link gapps", 0, 0, 0, 1, "nogroup");
@@ -26,5 +28,3 @@ INSERT INTO commands VALUES("useradd", "useradd <username> <mask> <password> <le
 INSERT INTO commands VALUES("userdel", "userdel <username> -- Remove a user from the user database.", 100, 0, 0, 1, "nogroup");
 INSERT INTO commands VALUES("users", "users -- List all users in the user database.", 100, 0, 0, 1, "nogroup");
 INSERT INTO commands VALUES("voice", "voice <nick> -- Give a user +v.", 50, 0, 0, 1, "nogroup");
-INSERT INTO commands VALUES("enable", "enable <command> -- Enable a command.", 90, 0, 0, 0, "nogroup");
-INSERT INTO commands VALUES("disable", "disable <command> -- Disable a command.", 90, 0, 0, 0, "nogroup");

@@ -19,17 +19,15 @@ my $session_timeout = 3600;	# Seconds
 $reloadtime = localtime;
 
 my $cfg = _read_config();
-my $db_bot = $cfg->{database}->{db};
-my $db_commands = "botCmd.db";
-
+my $prefix = $cfg->{misc}->{prefix};
+my $database = $cfg->{database}->{database};
 my $table_users = $cfg->{database}->{table_users};
 my $table_devices = $cfg->{database}->{table_devices};
 my $table_links = $cfg->{database}->{table_links};
 my $table_seen = $cfg->{database}->{table_seen};
-my $table_commands = "commands";
+my $table_commands = $cfg->{database}->{table_commands};
 
-my $dbh_bot = DBI->connect("dbi:SQLite:dbname=$root/db/$db_bot", "", "");
-my $dbh_commands = DBI->connect("dbi:SQLite:dbname=$root/db/botCmd.db", "", "");
+my $dbh = DBI->connect("dbi:SQLite:dbname=$root/db/$database", "", "");
 my $devices = {};
 my $users = {};
 my $links = {};
@@ -46,22 +44,24 @@ sub help {
 	my ($irc, $where, $args, $usermask, $command) = @_;
 	my $nick = (split /!/, $usermask)[0];
 	my $level = 0;
-	my $help_str = "";
+	my $cmd_prefix = "";
 	my @valid_commands = ();
 
 	if($where =~ /^#/) {
 		$target = $where;
+		$cmd_prefix = $prefix;
 	} else {
 		$target = $nick;
 	}
 	return unless _command_enabled("help") eq "success";
+	my $cmd = $args;
 
 	if(defined $users->{$nick}) {
 		$level = $users->{$nick}->{level} if $users->{$nick}->{level};
 	}
 
-	if($commands{$args}) {
-		return unless _command_enabled($args) eq "success";
+	if($commands{$cmd}) {
+		return unless _command_enabled($cmd) eq "success" and _command_visible($cmd) eq "success";
 		if($level >= $commands{$args}{level}) {
 			$irc->yield(privmsg => $target => "Usage: $commands{$args}{usage}");
 		}
@@ -70,9 +70,10 @@ sub help {
 		$irc->yield(privmsg => $target => "Sorry, $args not found in list of commands.  Try \"!help\" to see list of available commands.");
 
 	} else {
-		my $sth = _do_query($dbh_commands, "SELECT command FROM commands WHERE enabled=1 AND hidden=0 AND level<=$level");
-		my $help_items = $dbh_commands->selectall_hashref($sth, "command");
-		$irc->yield(privmsg => $target => "Available commands are: " . join(", ", sort keys %$help_items) . "Use \"!help <command>\" for help with a specific command.");
+		my $sth = _do_query($dbh, "SELECT command FROM commands WHERE enabled=1 AND hidden=0 AND level<=$level");
+		my $help_items = $dbh->selectall_hashref($sth, "command");
+		$irc->yield(privmsg => $target => "Available commands are: " . join(", ", sort keys %$help_items));
+		$irc->yield(privmsg => $target => "Use \"${cmd_prefix}help <command>\" for help with a specific command.");
 	}	
 	return;
 }
@@ -87,7 +88,7 @@ sub auth {
 	if(defined $users->{$nick} and defined $users->{$nick}->{mask}) {
 		if(crypt($args, $users->{$nick}->{password}) eq $users->{$nick}->{password}) {
 			my $now = time;
-			$dbh_bot->do("UPDATE $table_users SET last_auth='$now' WHERE nick='$nick'");
+			$dbh->do("UPDATE $table_users SET last_auth='$now' WHERE nick='$nick'");
 			_load_users();
 			$irc->yield(privmsg => $nick => "Login successful");
 		} else {
@@ -115,7 +116,7 @@ sub passwd {
 			my ($old_passwd, $new_passwd) = @args;
 			if(crypt($old_passwd, $users->{$nick}->{password}) eq $users->{$nick}->{password}) {
 				my $encrypted = crypt($new_passwd, $salt);
-				$dbh_bot->do("UPDATE $table_users SET password='$encrypted' WHERE nick='$nick'");
+				$dbh->do("UPDATE $table_users SET password='$encrypted' WHERE nick='$nick'");
 				_load_users();
 				$irc->yield(privmsg => $nick => "Password successfully changed");
 			} else {
@@ -153,7 +154,7 @@ sub useradd {
 			$irc->yield(privmsg => $nick => "Error. User $username already exists.");
 		} else {
 			my $encrypted = crypt($password, $salt);
-			$dbh_bot->do("INSERT INTO $table_users (nick, mask, password, level) VALUES ('$username', '$mask', '$encrypted', '$level')");
+			$dbh->do("INSERT INTO $table_users (nick, mask, password, level) VALUES ('$username', '$mask', '$encrypted', '$level')");
 			_load_users();
 			$irc->yield(privmsg => $nick => "User \"$username\" successfully created.");
 			$irc->yield(privmsg => $username => "Your bot account has been created with the default password \"$password\". Please use \"passwd\" to change it.");
@@ -169,7 +170,7 @@ sub userdel {
 	if(_validate_cmd($irc, $where, $args, $usermask, $command, 1) eq "success") {
 		_load_users();
 		if(defined $users->{$args}) {
-			$dbh_bot->do("DELETE FROM $table_users WHERE nick='$args'");
+			$dbh->do("DELETE FROM $table_users WHERE nick='$args'");
 			_load_users();
 			$irc->yield(privmsg => $nick => "User \"$args\" successfully deleted.");
 		} else {
@@ -287,11 +288,11 @@ sub seen {
 
 	my $q = "SELECT COUNT(*) FROM $table_seen WHERE nick='$args' AND channel='$where'";
 
-	my $count = $dbh_bot->selectrow_array($q);
+	my $count = $dbh->selectrow_array($q);
 	if($count == 0) {
 		$irc->yield(privmsg => $where => "I have not seen $args.");
 	} else {
-		my $time = $dbh_bot->selectrow_array("SELECT time FROM $table_seen WHERE nick='$args' AND channel='$where'");
+		my $time = $dbh->selectrow_array("SELECT time FROM $table_seen WHERE nick='$args' AND channel='$where'");
 		my $last = _duration(time - $time);
 
 		if(grep(/^$args$/, @nicks)) {
@@ -397,7 +398,7 @@ sub deviceadd {
 		if(defined $devices->{$id}) {
 			$irc->yield(privmsg => $target => "device $id already exists.");
 		} else {
-			$dbh_bot->do("INSERT INTO devices (id, description, usermask) VALUES ('$id', '$description', '$usermask')");
+			$dbh->do("INSERT INTO devices (id, description, usermask) VALUES ('$id', '$description', '$usermask')");
 			_load_devices();
 			$irc->yield(privmsg => $target => "Device $id successfully added.");
 		}
@@ -422,7 +423,7 @@ sub devicedel {
 		_load_devices();
 		my $id = $args;
 		if(defined $devices->{$id}) {
-			$dbh_bot->do("DELETE FROM $table_devices WHERE id=i'$id'");
+			$dbh->do("DELETE FROM $table_devices WHERE id=i'$id'");
 			_load_devices();
 			$irc->yield(privmsg => $target => "device $id successfully deleted.");
 		} else {
@@ -484,7 +485,7 @@ sub linkadd {
 		if(defined $links->{$title}) {
 			$irc->yield(privmsg => $target => "link $title already exists.");
 		} else {
-			$dbh_bot->do("INSERT INTO links (title, url, usermask) VALUES ('$title', '$url', '$usermask')");
+			$dbh->do("INSERT INTO links (title, url, usermask) VALUES ('$title', '$url', '$usermask')");
 			_load_links();
 			$irc->yield(privmsg => $target => "link $title successfully added.");
 		}
@@ -507,7 +508,7 @@ sub linkdel {
 		_load_links();
 		my $title = $args;
 		if(defined $links->{$title}) {
-			$dbh_bot->do("DELETE FROM $table_links WHERE title='$title'");
+			$dbh->do("DELETE FROM $table_links WHERE title='$title'");
 			_load_links();
 			$irc->yield(privmsg => $target => "Link $title successfully deleted.");
 		} else {
@@ -532,7 +533,7 @@ sub linkmod {
 		_load_links();
 		my ($title, $url) = split(/\s+/, $args);
 		if(defined $links->{$title}) {
-			$dbh_bot->do("UPDATE $table_links SET url='$url' WHERE descriptor='$title'");
+			$dbh->do("UPDATE $table_links SET url='$url' WHERE descriptor='$title'");
 			_load_links();
 			$irc->yield(privmsg => $target => "link $args[0] successfully updated.");
 		} else {
@@ -561,7 +562,7 @@ sub enable {
 				$irc->yield(privmsg => $target => "command \"$cmd\" is already enabled. nothing to do.");
 				return;
 			}
-			$dbh_commands->do("UPDATE $table_commands SET enabled=1 WHERE command='$cmd'");
+			$dbh->do("UPDATE $table_commands SET enabled=1 WHERE command='$cmd'");
 			$irc->yield(privmsg => $target => "command \"$cmd\" has been enabled.");
 		} else {
 			$irc->yield(privmsg => $target => "command \"$cmd\" doesn't exist.");
@@ -594,7 +595,7 @@ sub disable {
 				$irc->yield(privmsg => $target => "Are you kidding!?");
 				return;
 			} else {
-				$dbh_commands->do("UPDATE $table_commands SET enabled=0 WHERE command='$cmd'");
+				$dbh->do("UPDATE $table_commands SET enabled=0 WHERE command='$cmd'");
 				$irc->yield(privmsg => $target => "command \"$cmd\" has been disabled.");
 			}
 		} else {
@@ -611,33 +612,33 @@ sub disable {
 sub _log_seen {
 	my ($nick, $time, $where) = @_;
 
-	if( $dbh_bot->selectrow_array("SELECT COUNT(*) FROM $table_seen WHERE nick='$nick' AND channel='$where'") == 0 ) {
-		$dbh_bot->do("INSERT INTO $table_seen (nick, time, channel) VALUES ('$nick', '$time', '$where')");
+	if( $dbh->selectrow_array("SELECT COUNT(*) FROM $table_seen WHERE nick='$nick' AND channel='$where'") == 0 ) {
+		$dbh->do("INSERT INTO $table_seen (nick, time, channel) VALUES ('$nick', '$time', '$where')");
 	} else {
-		$dbh_bot->do("UPDATE $table_seen SET time='$time' WHERE nick='$nick'");
+		$dbh->do("UPDATE $table_seen SET time='$time' WHERE nick='$nick'");
 	}
 }
 
 sub _load_devices {
-	my $dbh = $dbh_bot;
+	my $dbh = $dbh;
 	my $sth = _do_query($dbh, "SELECT * FROM $table_devices");
 	$devices = $dbh->selectall_hashref($sth, "id");
 }
 
 sub _load_users {
-	my $dbh = $dbh_bot;
+	my $dbh = $dbh;
 	my $sth = _do_query($dbh, "SELECT * FROM $table_users");
 	$users = $dbh->selectall_hashref($sth, "nick");
 }
 
 sub _load_links {
-	my $dbh = $dbh_bot;
+	my $dbh = $dbh;
 	my $sth = _do_query($dbh, "SELECT * FROM $table_links");
 	$links = $dbh->selectall_hashref($sth, "title");
 }
 
 sub _load_commands {
-	my $dbh = $dbh_commands;
+	my $dbh = $dbh;
 	my %commands;
 	my $sth = _do_query($dbh, "SELECT * FROM $table_commands");
 	while (my $row = $sth->fetchrow_hashref()) {
@@ -693,7 +694,17 @@ sub _validate_cmd {
 sub _command_enabled {
 	my $cmd = shift;
 	my $q = "SELECT enabled FROM $table_commands WHERE command='$cmd'";
-	if($dbh_commands->selectrow_array($q) == 1) {
+	if($dbh->selectrow_array($q) == 1) {
+		return "success";
+	} else {
+		return "failed";
+	}
+}
+
+sub _command_visible {
+	my $cmd = shift;
+	my $q = "SELECT hidden FROM $table_commands WHERE command='$cmd'";
+	if($dbh->selectrow_array($q) == 0) {
 		return "success";
 	} else {
 		return "failed";
@@ -703,7 +714,7 @@ sub _command_enabled {
 sub _command_can_be_disabled {
 	my $cmd = shift;
 	my $q = "SELECT can_be_disabled FROM $table_commands WHERE command='$cmd'";
-	if($dbh_commands->selectrow_array($q) == 1) {
+	if($dbh->selectrow_array($q) == 1) {
 		return "success";
 	} else {
 		return "failed";
