@@ -17,4 +17,7 @@ $dbh->do("DROP TABLE IF EXISTS links");
 $dbh->do("CREATE TABLE links (title TEXT NOT NULL, url TEXT NOT NULL, usermask TEXT)");
 
 $dbh->do("DROP TABLE IF EXISTS commands");
-$dbh->do("CREATE TABLE commands (command TEXT NOT NULL UNIQUE, usage TEXT NOT NULL, level INTEGER NOT NULL, enabled INTEGER NOT NULL, hidden INTEGER NOT NULL, can_be_disabled INTEGER NOT NULL, cmd_group TEXT)");
+$dbh->do("CREATE TABLE commands (command TEXT NOT NULL UNIQUE, usage TEXT NOT NULL, level INTEGER NOT NULL, enabled INTEGER NOT NULL, hidden INTEGER NOT NULL, can_be_disabled INTEGER NOT NULL, cmd_group TEXT, function TEXT NOT NULL)");
+
+$dbh->do("DROP TABLE IF EXISTS autoop");
+$dbh->do("CREATE TABLE autoop (usermask TEXT NOT NULL, addedby TEXT NOT NULL)");
