@@ -1,12 +1,15 @@
 package botCmd;
 
+use lib "/home/gdanko/bot/perl";
 use Config::Tiny;
 use Data::Dumper;
-#use Date::Parse;
 use DBI;
+use Encode;
 use Exporter;
+use HTTP::Request::Common qw { POST };
+use HTTP::Headers;
 use JSON::XS;
-#use LWP::Simple;
+use LWP::UserAgent;
 use POSIX qw(strftime ceil);
 
 @ISA = ('Exporter');
@@ -27,6 +30,7 @@ my $table_links = $cfg->{database}->{table_links};
 my $table_seen = $cfg->{database}->{table_seen};
 my $table_commands = $cfg->{database}->{table_commands};
 my $table_autoop = $cfg->{database}->{table_autoop};
+my $ua = LWP::UserAgent->new();
 my @tiny = ("tinyurl.com", "goo.gl");
 
 my $dbh = DBI->connect("dbi:SQLite:dbname=$root/db/$database", "", "");
@@ -149,8 +153,12 @@ sub users {
 	if(_validate_cmd($irc, $where, \@args, $usermask, $command, 0) eq "success") {
 		_load_users();
 		my ($nick, $mask) = split (/!/, $usermask);
-		my $userlist = join(", ", sort(keys(%{$users})));
-		$irc->yield(privmsg => $nick => "Users: $userlist");
+		$irc->yield(privmsg => $nick => sprintf("%-20s%-55s%-7s", "Nick", "Mask", "Level"));
+		foreach my $key (sort keys %$users) {
+			my $user = $users->{$key};
+			my $line = sprintf("%-20s%-55s%-7d", $user->{nick}, $user->{mask}, $user->{level});
+			$irc->yield(privmsg => $nick => $line);
+		}
 	}
 	return;
 }
@@ -164,6 +172,13 @@ sub useradd {
 		_load_users();
 		my ($nick, $mask) = split (/!/, $usermask);
 		my ($username, $mask, $password, $level) = split(/\s+/, $args);
+
+		if($level !~ /^\d+$/) {
+			$irc->yield(privmsg => $nick => "Error. Level must be an integer.");
+			help($irc, $where, $command, $usermask);
+			return;
+		}
+
 		if(defined $users->{$username}) {
 			$irc->yield(privmsg => $nick => "Error. User $username already exists.");
 		} else {
@@ -274,6 +289,28 @@ sub unvoice {
 	return;
 }
 
+sub join {
+	my ($irc, $where, $args, $usermask, $command, $type) = @_;
+	my @args = split(/\s+/, $args);
+
+	if(_validate_cmd($irc, $where, \@args, $usermask, $command, 1) eq "success") {
+		my $channel = $args;
+		$channel = "#$channel" unless $channel =~ /^#/;
+		$irc->yield(join => $channel);
+	}
+}
+
+sub part {
+	my ($irc, $where, $args, $usermask, $command, $type) = @_;
+	my @args = split(/\s+/, $args);
+
+	if(_validate_cmd($irc, $where, \@args, $usermask, $command, 1) eq "success") {
+		my $channel = $args;
+		$channel = "#$channel" unless $channel =~ /^#/;
+		$irc->yield(part => $channel);
+	}
+}
+
 sub say {
 	my ($irc, $where, $args, $usermask, $command, $type) = @_;
 	return unless $type eq "public";
@@ -335,10 +372,11 @@ sub seen {
 
 sub ball {
 	my ($irc, $where, $args, $usermask, $command, $type) = @_;
-	#return unless $type eq "public";
+	return unless $type eq "public";
 	my @args = ($args);
 
 	if(_validate_cmd($irc, $where, \@args, $usermask, $command, 1) eq "success") {
+		return unless defined $args;
 		my @answers = ("It is certain", "It is decidedly so", "Without a doubt", "Yes – definitely", "You may rely on it", "As I see it, yes", "Most likely", "Outlook good", "Yes", "Signs point to yes", "Reply hazy,  try again", "Ask again later", "Better not tell you now", "Cannot predict now", "Concentrate and ask again", "Don't count on it", "My reply is no", "My sources say no", "Outlook not so good", "Very doubtful", "ProTekk!");
 		$irc->yield(privmsg => $where => $answers[ int(rand(@answers)) ]);
 	}
@@ -347,7 +385,7 @@ sub ball {
 sub mom {
 	my ($irc, $where, $args, $usermask, $command, $type) = @_;
 	return unless $type eq "public";
-	my @args = split(/\s+/, $args);
+	my @args = ($args);
 
 	if(_validate_cmd($irc, $where, \@args, $usermask, $command, 1) eq "success") {
 		my ($nick, $mask) = split (/!/, $usermask);
@@ -358,6 +396,60 @@ sub mom {
 			$irc->yield(privmsg => $where => "$args: I heard your mom uses an iPhone.");
 		}
 	}
+}
+
+sub goog {
+	my ($irc, $where, $args, $usermask, $command, $type) = @_;
+	my @args = ($args);
+
+	if(_validate_cmd($irc, $where, \@args, $usermask, $command, 1) eq "success") {
+		my $q = $args;
+		my $json = get("http://ajax.googleapis.com/ajax/services/search/web?v=1.0&q=$q");
+		my $utf8 = encode ('utf8', $json);
+		my $hashref = decode_json $utf8;
+		my $url = $hashref->{responseData}->{results}[0]->{url};
+		$irc->yield(privmsg => $where => $url);
+	}
+}
+
+sub gerrit {
+	my ($irc, $where, $args, $usermask, $command, $type) = @_;
+	my ($nick, $mask) = split (/!/, $usermask);
+	my ($count, @changes, $url, $plref, $payload, $max_results, $h, $output);
+	$max_results = 10;
+	$url = "http://gerrit.sudoservers.com/gerrit/rpc/ChangeListService";
+	$plref = {
+		"jsonrpc" => "2.0",
+		"method" => "allQueryNext",
+		"params" => [ $args, "z", $max_results ],
+		"id" => 1
+	};
+	$payload = JSON::XS->new->utf8->encode($plref);
+	$h = HTTP::Headers->new(
+    	Accept => "application/json",
+    	Content_Type => "application/json; charset=UTF-8"
+	);
+	my $output = _fetch_url($url, $h, "POST", $payload);
+	my $data = decode_json $output;
+
+	if(defined $data->{error}) {
+		$irc->yield(privmsg => $nick => "No results found.");
+	} else {
+		$irc->yield(privmsg => $nick => "Top results for the query \"$args\"");
+		my @changes = @{$data->{result}->{changes}};
+		foreach my $change (@changes) {
+			my $c_id = $change->{id}->{id};
+			my $c_subj = $change->{subject};
+			$irc->yield(privmsg => $nick => "http://gerrit.sudoservers.com/$c_id - $c_subj");
+		}
+	}
+}
+
+sub test {
+	my ($irc, $where, $args, $usermask, $command, $type) = @_;
+	my ($nick, $mask) = split (/!/, $usermask);
+	my $text = sprintf("%15s%15s%15s", "1", "2", "3");
+	$irc->yield(privmsg => $nick => $text);
 }
 
 sub _ctcp_handler {
@@ -576,7 +668,7 @@ sub enable {
 }
 
 sub disable {
-	my ($irc, $where, $args, $usermask, $commandi, $type) = @_;
+	my ($irc, $where, $args, $usermask, $command, $type) = @_;
 	my @args = split(/\s+/, $args);
 
 	if(_validate_cmd($irc, $where, \@args, $usermask, $command, 1) eq "success") {
@@ -626,6 +718,8 @@ sub _pub_msg_handler {
 		if($commands{$command}) {
 			eval { &{$commands{$command}{function}}($irc, $channel, $args, $usermask, $command, "public") };
 			$irc->yield(privmsg => $channel => "Got the following error: $@") if $@;
+		} else {
+			$irc->yield(privmsg => $channel => "Invalid command: $command. Type \"${prefix}help\" for a list of valid commands.");
 		}
 		return;
 
@@ -633,7 +727,7 @@ sub _pub_msg_handler {
 	} elsif($message =~ m/^https?:\/\/([^\/]+)/) {
 		# Do not process already shortened URLs
 		return if grep(/^$1e$/, @tiny) or length($message) < 20;
-		my $tiny = get("http://tinyurl.com/api-create.php?url=$message");
+		#my $tiny = get("http://tinyurl.com/api-create.php?url=$message");
 		$irc->yield(privmsg => $where => $tiny);
 		return;
 
@@ -652,12 +746,12 @@ sub _priv_msg_handler {
 	} else {
 		$command = $message;
 	}
+
 	if($commands{$command}) {
-		#eval { &{$command}($irc, $nick, $args, $usermask, $command, "private") };
 		eval { &{$commands{$command}{function}}($irc, $nick, $args, $usermask, $command, "private") };
 		$irc->yield(privmsg => $nick => "Got the following error: $@") if $@;
 	} else {
-		$irc->yield(privmsg => $nick => "Invalid command: $command. Type help for a list of commands.");
+		$irc->yield(privmsg => $nick => "Invalid command: $command. Type \"help\" for a list of valid commands.");
 	}
 	return;
 }
@@ -729,8 +823,8 @@ sub _validate_cmd {
 		} else {
 			$account_status = 0;
 			$output = "Unknown username: $nick";
-			return $output;
 		}
+
 		if($account_status == 0) {
 			$irc->yield(privmsg => $nick => $output);
 			return "failed";
@@ -782,6 +876,13 @@ sub _do_query {
 	my $sth = $dbh->prepare($query);
 	$sth->execute;
 	return $sth;
+}
+
+sub _fetch_url {
+	my ($url, $headers, $method, $data) = @_;
+	my $req = HTTP::Request->new($method, $url, $headers, $data);
+	my $resp = $ua->request($req);
+	return $resp->content;
 }
 
 sub _duration {
