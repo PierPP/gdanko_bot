@@ -7,7 +7,6 @@ use DBI;
 my $module = "support";
 my $bot = botCmd->new();
 my $dbh = $bot->{dbh};
-my $table_commands = $bot->{cfg}->{database}->{table_commands};
 my $commands = ${botCmd::commands};
 load_commands();
 
@@ -54,19 +53,6 @@ sub load_commands {
 			can_be_disabled => 0
 		}
 	};
-
-	foreach my $key (keys %$methods) {
-		my $method = $methods->{$key};
-		$method->{module} = $module;
-		$method->{method} = $key;
-		$commands->{$key} = $method;
-
-		my $count = $dbh->selectrow_array("SELECT COUNT(*) FROM $table_commands WHERE command='$key'");
-		if($count > 0) {
-			$dbh->do("UPDATE $table_commands SET level='$method->{level}' WHERE command='$key'");
-		} else {
-			$dbh->do("INSERT INTO $table_commands (command, level, channels) VALUES ('$key', $method->{level}, '#teamkang,#AOKP-dev,#AOKP-support')");
-		}
-	}
+	$bot->update_commands($module, $methods);
 }
 1;

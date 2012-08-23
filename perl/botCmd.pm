@@ -44,7 +44,9 @@ for my $module ( plugins() ) {
 		$classes{$module_name} = $mod;
 	}
 }
+load_commands();
 #print STDERR Dumper(\$commands);
+
 
 $reloadtime = localtime;
 
@@ -189,7 +191,6 @@ sub validate_cmd {
 				$output = "You do not have permission to execute $command.";
 
 			# Validate session
-			} elsif($command ne "auth" and ($now - $users->{$nick}->{last_auth}) > $session_timeout) {
 				$account_status = 0;
 				$output = "Your session has expired. Please login with \"auth\".";
 			}
@@ -212,6 +213,12 @@ sub validate_cmd {
 	} else {
 		return "success";
 	}
+}
+
+sub log_error {
+	my $self = shift;
+	my $text = shift;
+	print STDERR "$text\n";
 }
 
 sub command_enabled {
@@ -243,7 +250,6 @@ sub command_can_be_disabled {
 	if($dbh->selectrow_array($q) == 1) {
 		return "success";
 	} else {
-print STDERR "failed";
 		return "failed";
 	}
 }
@@ -278,6 +284,44 @@ sub function_exists {
 	my $function = shift;
 	return \&{$function} if defined &{$function};
 	return;
+}
+
+sub update_commands {
+	my $self = shift;
+	my ($module, $methods) = @_;
+	foreach my $key (keys %$methods) {
+		my $method;
+		my $command = $methods->{$key};
+		if($command->{method}) {
+			$method = $command->{method};
+		} else {
+			$method = $key;
+		}
+		my $usage = $command->{usage};
+		my $level = $command->{level};
+		my $cbd = $command->{can_be_disabled};
+
+		my $count = $dbh->selectrow_array("SELECT COUNT(*) FROM $table_commands WHERE command='$key'");
+		if($count > 0) {
+			$dbh->do(
+				"UPDATE $table_commands SET module='$module', method='$method', usage=\"$usage\", level='$level', can_be_disabled='$cbd' WHERE command='$key'"
+			);
+		} else {
+			$dbh->do(
+				"INSERT INTO $table_commands (command, usage, level, can_be_disabled, module, method, channels) VALUES ('$key', \"$usage\", $level, $cbd, '$module', '$method', '#teamkang,#AOKP-dev,#AOKP-support')"
+			);
+		}
+	}
+}
+
+sub load_commands {
+	my $self = shift;
+	my $sth = $dbh->prepare("SELECT * FROM $table_commands");
+	$sth->execute;
+	$commands = $dbh->selectall_hashref($sth, "command");
+	foreach my $key (keys %$commands) {
+		$commands->{$key}->{channels} = [ split(",", $commands->{$key}->{channels}) ];
+	}
 }
 
 sub read_config {

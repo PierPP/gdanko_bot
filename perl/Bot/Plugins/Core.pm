@@ -7,8 +7,8 @@ use POSIX qw(strftime ceil);
 
 my $module = "core";
 my $bot = botCmd->new();
-my $table_commands = $bot->{cfg}->{database}->{table_commands};
 my $table_users = $bot->{cfg}->{database}->{table_users};
+my $table_commands = $bot->{cfg}->{database}->{table_commands};
 my $dbh = $bot->{dbh};
 my $users = {};
 my $commands = ${botCmd::commands};
@@ -255,6 +255,8 @@ sub enable {
 				return;
 			}
 			$dbh->do("UPDATE $table_commands SET enabled=1 WHERE command='$cmd'");
+			$bot->load_commands();
+print STDERR Dumper(\$commands);
 			$irc->yield(privmsg => $where => "command \"$cmd\" has been enabled.");
 		} else {
 			$irc->yield(privmsg => $where => "command \"$cmd\" doesn't exist.");
@@ -281,6 +283,8 @@ sub disable {
 				return;
 			} else {
 				$dbh->do("UPDATE $table_commands SET enabled=0 WHERE command='$cmd'");
+				$bot->load_commands();
+print STDERR Dumper(\$commands);
 				$irc->yield(privmsg => $where => "command \"$cmd\" has been disabled.");
 			}
 		} else {
@@ -359,20 +363,7 @@ sub load_commands {
 			can_be_disabled => 0
 		}
 	};
-
-	foreach my $key (keys %$methods) {
-		my $method = $methods->{$key};
-		$method->{module} = $module;
-		$method->{method} = $key;
-		$commands->{$key} = $method;
-
-		my $count = $dbh->selectrow_array("SELECT COUNT(*) FROM $table_commands WHERE command='$key'");
-		if($count > 0) {
-			$dbh->do("UPDATE $table_commands SET level='$method->{level}' WHERE command='$key'");
-		} else {
-			$dbh->do("INSERT INTO $table_commands (command, level, channels) VALUES ('$key', $method->{level}, '#teamkang,#AOKP-dev,#AOKP-support')");
-		}
-	}
+	$bot->update_commands($module, $methods);
 }
 
 1;

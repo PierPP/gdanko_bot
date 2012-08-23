@@ -7,7 +7,6 @@ use POSIX qw(strftime);
 
 my $module = "extras";
 my $bot = botCmd->new();
-my $table_commands = $bot->{cfg}->{database}->{table_commands};
 my $table_links = $bot->{cfg}->{database}->{table_links};
 my $dbh = $bot->{dbh};
 my $links = {};
@@ -27,7 +26,6 @@ sub new {
 sub ball {
 	my $self = shift;
 	my ($irc, $where, $args, $usermask, $command, $type) = @_;
-	return unless $type eq "public";
 	my @args = ($args);
 
 	if($bot->validate_cmd($irc, $where, \@args, $usermask, $command, 1) eq "success") {
@@ -280,7 +278,7 @@ sub load_commands {
 			method => "ball"
 		},
 		goog => {
-			usage => "goog <query> -- Perform an \"I'm feeling lucky\" Google search on <query>.",
+			usage => "goog <query> -- Perform a Google search on <query> and display the first result.",
 			level => 0,
 			can_be_disabled => 1
 		},
@@ -317,7 +315,7 @@ sub load_commands {
 		linkmod => {
 			usage => "linkmod <title> <new_url> -- Update the URL for an existing link.",
 			level => 40,
-			can_be_disabed => 1
+			can_be_disabled => 1
 		},
 		part => {
 			usage => "part <channel> -- Exit the channel <channel>.",
@@ -350,20 +348,7 @@ sub load_commands {
 			can_be_disabled => 1
 		}
 	};
-
-	foreach my $key (keys %$methods) {
-		my $method = $methods->{$key};
-		$method->{module} = $module;
-		$method->{method} = $key unless defined $method->{method};
-		$commands->{$key} = $method;
-
-		my $count = $dbh->selectrow_array("SELECT COUNT(*) FROM $table_commands WHERE command='$key'");
-		if($count > 0) {
-			$dbh->do("UPDATE $table_commands SET level='$method->{level}' WHERE command='$key'");
-		} else {
-			$dbh->do("INSERT INTO $table_commands (command, level, channels) VALUES ('$key', $method->{level}, '#teamkang,#AOKP-dev,#AOKP-support')");
-		}
-	}
+	$bot->update_commands($module, $methods);
 }
 	
 1;

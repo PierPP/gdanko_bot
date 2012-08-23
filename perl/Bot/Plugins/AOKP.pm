@@ -6,7 +6,6 @@ use JSON::XS;
 
 my $module = "aokp";
 my $bot = botCmd->new();
-my $table_commands = $bot->{cfg}->{database}->{table_commands};
 my $table_devices = $bot->{cfg}->{database}->{table_devices};
 my $dbh = $bot->{dbh};
 my $devices = {};
@@ -172,25 +171,17 @@ sub load_commands {
 			level => 40,
 			can_be_disabled => 1
 		},
+		devicemod => {
+			usage => "devicemod <device id> <device name> -- Modify a device ID's description.",
+			level => 40,
+			can_be_disabled => 1
+		},
 		gerrit => {
-			usage => "gerrit <query> -- Perform a Gerrit search for <query>. All Gerrit search criteria such as \"status:abandond\" can be used.",
+			usage => "gerrit <query> -- Perform a Gerrit search for <query>. Any standard Gerrit search criteria can be used.",
 			level => 0,
 			can_be_disabled => 1
 		}
 	};
-
-	foreach my $key (keys %$methods) {
-		my $method = $methods->{$key};
-		$method->{module} = $module;
-		$method->{method} = $key;
-		$commands->{$key} = $method;
-
-		my $count = $dbh->selectrow_array("SELECT COUNT(*) FROM $table_commands WHERE command='$key'");
-		if($count > 0) {
-			$dbh->do("UPDATE $table_commands SET level='$method->{level}' WHERE command='$key'");
-		} else {
-			$dbh->do("INSERT INTO $table_commands (command, level, channels) VALUES ('$key', $method->{level}, '#teamkang,#AOKP-dev,#AOKP-support')");
-		}
-	}
+	$bot->update_commands($module, $methods);
 }
 1;
