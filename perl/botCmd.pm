@@ -36,7 +36,7 @@ load_users();
 for my $module ( plugins() ) {
 	eval "use $module";
 	if($@) {
-		print "[Warn] Failed to load plugin $module: $@\n";
+		print STDERR "[Warn] Failed to load plugin $module: $@\n";
 	} else {
 		print "Loaded: $module\n";
 		my $mod = $module->new();
@@ -44,7 +44,6 @@ for my $module ( plugins() ) {
 		$classes{$module_name} = $mod;
 	}
 }
-#print STDERR Dumper(\%classes);
 #print STDERR Dumper(\$commands);
 
 $reloadtime = localtime;

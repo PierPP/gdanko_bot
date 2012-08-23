@@ -7,7 +7,7 @@ use POSIX qw(strftime);
 
 my $module = "extras";
 my $bot = botCmd->new();
-my $root = $bot->{cfg}->{general}->{root};
+my $table_commands = $bot->{cfg}->{database}->{table_commands};
 my $table_links = $bot->{cfg}->{database}->{table_links};
 my $dbh = $bot->{dbh};
 my $links = {};
@@ -357,7 +357,12 @@ sub load_commands {
 		$method->{method} = $key unless defined $method->{method};
 		$commands->{$key} = $method;
 
-		$dbh->do("UPDATE commands SET level='$method->{level}' WHERE command='$key'");
+		my $count = $dbh->selectrow_array("SELECT COUNT(*) FROM $table_commands WHERE command='$key'");
+		if($count > 0) {
+			$dbh->do("UPDATE $table_commands SET level='$method->{level}' WHERE command='$key'");
+		} else {
+			$dbh->do("INSERT INTO $table_commands (command, level, channels) VALUES ('$key', $method->{level}, '#teamkang,#AOKP-dev,#AOKP-support')");
+		}
 	}
 }
 	
