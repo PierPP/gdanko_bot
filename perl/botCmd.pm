@@ -44,8 +44,8 @@ for my $module ( plugins() ) {
 		$classes{$module_name} = $mod;
 	}
 }
-print STDERR Dumper(\%classes);
-print STDERR Dumper(\$commands);
+#print STDERR Dumper(\%classes);
+#print STDERR Dumper(\$commands);
 
 $reloadtime = localtime;
 

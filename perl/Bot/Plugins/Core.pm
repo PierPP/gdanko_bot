@@ -66,7 +66,6 @@ sub auth {
 	my ($irc, $where, $args, $usermask, $command, $type) = @_;
 	my $session_timeout = $bot->{cfg}->{general}->{session_timeout};
 	return if $type eq "public";
-print STDERR "entering auth\n";
 	my @args = split(/\s+/, $args);
 
 	if($bot->validate_cmd($irc, $where, \@args, $usermask, $command, 1) eq "success") {
@@ -139,8 +138,15 @@ sub users {
 
 	if($bot->validate_cmd($irc, $where, \@args, $usermask, $command, 0) eq "success") {
 		load_users();
+		my ($header, $divider) = ("", "");
 		my ($nick, $mask) = split (/!/, $usermask);
+		$header = sprintf("%-20s%-55s%-7s", "Nick", "Mask", "Level");
+		for(my $x = 0; $x < length($header); $x++) {
+			$divider .= "=";
+		}
 		$irc->yield(privmsg => $nick => sprintf("%-20s%-55s%-7s", "Nick", "Mask", "Level"));
+		$irc->yield(privmsg => $nick => $divider);
+		
 		foreach my $key (sort keys %$users) {
 			my $user = $users->{$key};
 			my $line = sprintf("%-20s%-55s%-7d", $user->{nick}, $user->{mask}, $user->{level});
