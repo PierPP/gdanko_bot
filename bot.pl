@@ -76,8 +76,8 @@ sub read_config {
 sub daemonize {
 	chdir '/'					or die "Can't chdir to /: $!";
 	open STDIN, '/dev/null'		or die "Can't read /dev/null: $!";
-	open STDOUT, ">>", "/home/gdanko/out.txt" or die "Can't write to /dev/null: $!";
-	open STDERR, ">>", "/home/gdanko/err.txt" or die "Can't write to /dev/null: $!";
+	open STDOUT, ">>", "/home/gdanko/bot2/out.txt" or die "Can't write to /dev/null: $!";
+	open STDERR, ">>", "/home/gdanko/bot2/err.txt" or die "Can't write to /dev/null: $!";
 	defined(my $pid = fork)		or die "Can't fork: $!";
 	exit if $pid;
 	setsid						or die "Can't start a new session: $!";
@@ -194,7 +194,7 @@ sub reload {
 	$reloadtime = "";
 	print STDOUT "[Info] Reloading botCmd.pm\n";
 	Module::Reload::Selective->reload(qw(botCmd));
-	import botCmd;
-	use botCmd qw($reloadtime);
+	import botCmd qw($reloadtime);
+	#use botCmd qw($reloadtime);
 	$reloadtime = ${botCmd::reloadtime};
 }
