@@ -7,7 +7,6 @@ use DBI;
 my $module = "modes";
 my $bot = botCmd->new();
 my $dbh = $bot->{dbh};
-my $commands = ${botCmd::commands};
 load_commands();
 
 sub new {

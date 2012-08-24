@@ -9,7 +9,6 @@ my $bot = botCmd->new();
 my $table_devices = $bot->{cfg}->{database}->{table_devices};
 my $dbh = $bot->{dbh};
 my $devices = {};
-my $commands = ${botCmd::commands};
 
 load_devices();
 load_commands();

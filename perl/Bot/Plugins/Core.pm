@@ -11,7 +11,6 @@ my $table_users = $bot->{cfg}->{database}->{table_users};
 my $table_commands = $bot->{cfg}->{database}->{table_commands};
 my $dbh = $bot->{dbh};
 my $users = {};
-my $commands = ${botCmd::commands};
 
 load_users();
 load_commands();
@@ -41,10 +40,10 @@ sub help {
 	}
 	$cmd = $args;
 
-	if($cmd ne undef and $commands->{$cmd}) {
+	if($cmd ne undef and ${botCmd::commands}->{$cmd}) {
 		return unless $bot->command_enabled($cmd) eq "success" and $bot->command_visible($cmd) eq "success";
-		if($level >= $commands->{$args}->{level}) {
-			$irc->yield(privmsg => $target => "Usage: $commands->{$args}->{usage}");
+		if($level >= ${botCmd::commands}->{$args}->{level}) {
+			$irc->yield(privmsg => $target => "Usage: ${botCmd::commands}->{$args}->{usage}");
 		}
 
 	} elsif($args) {
@@ -249,14 +248,14 @@ sub enable {
 
 	if($bot->validate_cmd($irc, $where, \@args, $usermask, $command, 1) eq "success") {
 		my $cmd = $args;
-		if(defined $commands->{$cmd}) {
+		if(defined ${botCmd::commands}->{$cmd}) {
 			if($bot->command_enabled($cmd) eq "success") {
 				$irc->yield(privmsg => $where => "command \"$cmd\" is already enabled. nothing to do.");
 				return;
 			}
 			$dbh->do("UPDATE $table_commands SET enabled=1 WHERE command='$cmd'");
 			$bot->load_commands();
-print STDERR Dumper(\$commands);
+print STDERR Dumper(\${botCmd::commands});
 			$irc->yield(privmsg => $where => "command \"$cmd\" has been enabled.");
 		} else {
 			$irc->yield(privmsg => $where => "command \"$cmd\" doesn't exist.");
@@ -272,19 +271,18 @@ sub disable {
 
 	if($bot->validate_cmd($irc, $where, \@args, $usermask, $command, 1) eq "success") {
 		my $cmd = $args;
-		if($commands->{$cmd}) {
+		if(${botCmd::commands}->{$cmd}) {
 			if($bot->command_enabled($cmd) ne "success") {
 				$irc->yield(privmsg => $where => "command \"$cmd\" is already disabled. nothing to do.");
 				return;
 			}
 
-			if($commands->{$cmd}->{can_be_disabled} == 0) {
+			if(${botCmd::commands}->{$cmd}->{can_be_disabled} == 0) {
 				$irc->yield(privmsg => $where => "Are you kidding!?");
 				return;
 			} else {
 				$dbh->do("UPDATE $table_commands SET enabled=0 WHERE command='$cmd'");
 				$bot->load_commands();
-print STDERR Dumper(\$commands);
 				$irc->yield(privmsg => $where => "command \"$cmd\" has been disabled.");
 			}
 		} else {

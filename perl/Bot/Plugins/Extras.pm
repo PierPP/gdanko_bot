@@ -10,7 +10,6 @@ my $bot = botCmd->new();
 my $table_links = $bot->{cfg}->{database}->{table_links};
 my $dbh = $bot->{dbh};
 my $links = {};
-my $commands = ${botCmd::commands};
 
 load_links();
 load_commands();
